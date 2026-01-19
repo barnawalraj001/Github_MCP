@@ -2,6 +2,7 @@
 import requests
 
 BASE_URL = "https://api.github.com"
+MAX_LIMIT = 30
 
 def _headers(token: str):
     return {
@@ -9,17 +10,34 @@ def _headers(token: str):
         "Accept": "application/vnd.github+json"
     }
 
-def list_repos(token: str):
+def _safe_limit(limit: int):
+    try:
+        return min(int(limit), MAX_LIMIT)
+    except Exception:
+        return 10
+
+def get_me(token: str):
     r = requests.get(
-        f"{BASE_URL}/user/repos",
+        f"{BASE_URL}/user",
         headers=_headers(token)
     )
     return r.json()
 
-def list_issues(token: str, owner: str, repo: str):
+def list_repos(token: str, limit: int = 10):
+    limit = _safe_limit(limit)
+    r = requests.get(
+        f"{BASE_URL}/user/repos",
+        headers=_headers(token),
+        params={"per_page": limit}
+    )
+    return r.json()
+
+def list_issues(token: str, owner: str, repo: str, limit: int = 10):
+    limit = _safe_limit(limit)
     r = requests.get(
         f"{BASE_URL}/repos/{owner}/{repo}/issues",
-        headers=_headers(token)
+        headers=_headers(token),
+        params={"per_page": limit}
     )
     return r.json()
 

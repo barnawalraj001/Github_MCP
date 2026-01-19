@@ -15,22 +15,19 @@ CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
 
 app = FastAPI()
 
+
 # -------------------------------------------------
 # GitHub OAuth Login (TEST MODE)
 # -------------------------------------------------
 @app.get("/auth/github/login")
 def github_login(user_id: str):
-    print("🔥 LOGIN endpoint HIT with user_id =", user_id)
-
     github_url = (
         "https://github.com/login/oauth/authorize"
         f"?client_id={CLIENT_ID}"
         f"&state={user_id}"
         "&scope=repo read:user user:email"
     )
-
     return RedirectResponse(github_url)
-
 
 
 # -------------------------------------------------
@@ -38,7 +35,6 @@ def github_login(user_id: str):
 # -------------------------------------------------
 @app.get("/auth/callback/github")
 def github_callback(code: str, state: str):
-    print("🔥 CALLBACK endpoint HIT with state =", state)
     token_res = requests.post(
         "https://github.com/login/oauth/access_token",
         headers={"Accept": "application/json"},
@@ -73,7 +69,7 @@ async def mcp_handler(request: Request):
     params = body.get("params", {})
     meta = body.get("meta", {})
 
-    # 🔑 TEST MODE USER RESOLUTION
+    # TEST MODE USER RESOLUTION
     user_id = meta.get("user_id")
     if not user_id:
         return JSONResponse(
@@ -96,9 +92,23 @@ async def mcp_handler(request: Request):
             "result": {
                 "tools": [
                     {
+                        "name": "github.get_me",
+                        "description": "Get connected GitHub user profile",
+                        "input_schema": {}
+                    },
+                    {
                         "name": "github.list_repos",
                         "description": "List GitHub repositories",
-                        "input_schema": {}
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {
+                                "limit": {
+                                    "type": "integer",
+                                    "default": 10,
+                                    "description": "Max repositories (max 30)"
+                                }
+                            }
+                        }
                     },
                     {
                         "name": "github.list_issues",
@@ -107,7 +117,11 @@ async def mcp_handler(request: Request):
                             "type": "object",
                             "properties": {
                                 "owner": {"type": "string"},
-                                "repo": {"type": "string"}
+                                "repo": {"type": "string"},
+                                "limit": {
+                                    "type": "integer",
+                                    "default": 10
+                                }
                             },
                             "required": ["owner", "repo"]
                         }
@@ -135,14 +149,21 @@ async def mcp_handler(request: Request):
         tool = params.get("name")
         args = params.get("arguments", {})
 
-        if tool == "github.list_repos":
-            result = github_api.list_repos(token)
+        if tool == "github.get_me":
+            result = github_api.get_me(token)
+
+        elif tool == "github.list_repos":
+            result = github_api.list_repos(
+                token,
+                args.get("limit", 10)
+            )
 
         elif tool == "github.list_issues":
             result = github_api.list_issues(
                 token,
                 args["owner"],
-                args["repo"]
+                args["repo"],
+                args.get("limit", 10)
             )
 
         elif tool == "github.create_issue":
