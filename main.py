@@ -1,17 +1,11 @@
 # main.py
-import os
 import requests
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from dotenv import load_dotenv
 
+from config import CLIENT_ID, CLIENT_SECRET
 from tokens import save_token, get_token
-import github_api
-
-load_dotenv()
-
-CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
-CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
+import tools
 
 app = FastAPI()
 
@@ -20,10 +14,15 @@ app = FastAPI()
 # GitHub OAuth Login (TEST MODE)
 # -------------------------------------------------
 @app.get("/auth/github/login")
-def github_login(user_id: str):
+def github_login(request: Request, user_id: str):
+    # Dynamically build the redirect URI based on the host serving the login request
+    base_url = str(request.base_url).rstrip("/")
+    redirect_uri = f"{base_url}/auth/callback/github"
+    
     github_url = (
         "https://github.com/login/oauth/authorize"
         f"?client_id={CLIENT_ID}"
+        f"&redirect_uri={redirect_uri}"
         f"&state={user_id}"
         "&scope=repo read:user user:email"
     )
@@ -62,7 +61,13 @@ def github_callback(code: str, state: str):
 # -------------------------------------------------
 @app.post("/mcp")
 async def mcp_handler(request: Request):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Invalid JSON body"}
+        )
 
     method = body.get("method")
     id_ = body.get("id")
@@ -79,9 +84,19 @@ async def mcp_handler(request: Request):
 
     token = get_token(user_id)
     if not token:
+        # Construct the auth URL dynamically based on the incoming request domain
+        # If running locally this will typically be http://localhost:8000/auth/github/login?user_id=...
+        # In a real deployed environment it will use the deployed hostname.
+        base_url = str(request.base_url).rstrip("/")
+        auth_url = f"{base_url}/auth/github/login?user_id={user_id}"
+
         return JSONResponse(
             status_code=401,
-            content={"error": f"GitHub not connected for user_id={user_id}"}
+            content={
+                "error": f"GitHub not connected for user_id={user_id}",
+                "auth_url": auth_url,
+                "message": f"Please visit {auth_url} to connect your GitHub account."
+            }
         )
 
     # ---------------- tools/list ----------------
@@ -90,93 +105,22 @@ async def mcp_handler(request: Request):
             "jsonrpc": "2.0",
             "id": id_,
             "result": {
-                "tools": [
-                    {
-                        "name": "github.get_me",
-                        "description": "Get connected GitHub user profile",
-                        "input_schema": {}
-                    },
-                    {
-                        "name": "github.list_repos",
-                        "description": "List GitHub repositories",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {
-                                "limit": {
-                                    "type": "integer",
-                                    "default": 10,
-                                    "description": "Max repositories (max 30)"
-                                }
-                            }
-                        }
-                    },
-                    {
-                        "name": "github.list_issues",
-                        "description": "List issues of a repository",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {
-                                "owner": {"type": "string"},
-                                "repo": {"type": "string"},
-                                "limit": {
-                                    "type": "integer",
-                                    "default": 10
-                                }
-                            },
-                            "required": ["owner", "repo"]
-                        }
-                    },
-                    {
-                        "name": "github.create_issue",
-                        "description": "Create a GitHub issue",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {
-                                "owner": {"type": "string"},
-                                "repo": {"type": "string"},
-                                "title": {"type": "string"},
-                                "body": {"type": "string"}
-                            },
-                            "required": ["owner", "repo", "title"]
-                        }
-                    }
-                ]
+                "tools": tools.get_all_tool_schemas()
             }
         }
 
     # ---------------- tools/call ----------------
     if method == "tools/call":
-        tool = params.get("name")
+        tool_name = params.get("name")
         args = params.get("arguments", {})
 
-        if tool == "github.get_me":
-            result = github_api.get_me(token)
-
-        elif tool == "github.list_repos":
-            result = github_api.list_repos(
-                token,
-                args.get("limit", 10)
+        if not tool_name:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Tool name is required in arguments"}
             )
 
-        elif tool == "github.list_issues":
-            result = github_api.list_issues(
-                token,
-                args["owner"],
-                args["repo"],
-                args.get("limit", 10)
-            )
-
-        elif tool == "github.create_issue":
-            result = github_api.create_issue(
-                token,
-                args["owner"],
-                args["repo"],
-                args["title"],
-                args.get("body", "")
-            )
-
-        else:
-            return {"error": "Unknown tool"}
+        result = tools.call_tool(tool_name, args, token)
 
         return {
             "jsonrpc": "2.0",
@@ -184,4 +128,7 @@ async def mcp_handler(request: Request):
             "result": result
         }
 
-    return {"error": "Invalid MCP method"}
+    return JSONResponse(
+        status_code=400,
+        content={"error": "Invalid MCP method"}
+    )

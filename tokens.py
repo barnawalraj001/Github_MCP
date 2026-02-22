@@ -1,12 +1,14 @@
-# tokens.py
+import redis
+from config import REDIS_URL
 
-_tokens = {}
+# Connect to Redis with string decoding enabled
+redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
 
 def save_token(user_id: str, access_token: str):
-    _tokens[user_id] = access_token
+    """Save GitHub access token for a user in Redis."""
+    redis_client.set(f"github_token:{user_id}", access_token)
 
-def get_token(user_id: str):
-    return _tokens.get(user_id)
-
-def all_tokens():
-    return _tokens
+def get_token(user_id: str) -> str:
+    """Retrieve GitHub access token for a user from Redis."""
+    token = redis_client.get(f"github_token:{user_id}")
+    return token
