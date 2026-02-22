@@ -1,5 +1,6 @@
 from config import safe_limit
 from github_api import make_request
+from utils.serializers import serialize_pull_request, safe_list
 
 SCHEMAS = [
     {
@@ -91,23 +92,29 @@ def list_pull_requests(args: dict, token: str):
     repo = args["repo"]
     limit = safe_limit(args.get("limit", 10))
     state = args.get("state", "open")
-    return make_request(
+    raw = make_request(
         "GET", 
         f"repos/{owner}/{repo}/pulls", 
         token, 
         params={"per_page": limit, "state": state}
     )
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    return safe_list(raw, serialize_pull_request)
 
 def get_pull_request(args: dict, token: str):
     owner = args["owner"]
     repo = args["repo"]
     pull_number = args["pull_number"]
-    return make_request("GET", f"repos/{owner}/{repo}/pulls/{pull_number}", token)
+    raw = make_request("GET", f"repos/{owner}/{repo}/pulls/{pull_number}", token)
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    return serialize_pull_request(raw)
 
 def create_pull_request(args: dict, token: str):
     owner = args["owner"]
     repo = args["repo"]
-    return make_request(
+    raw = make_request(
         "POST", 
         f"repos/{owner}/{repo}/pulls", 
         token, 
@@ -118,6 +125,9 @@ def create_pull_request(args: dict, token: str):
             "body": args.get("body", "")
         }
     )
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    return serialize_pull_request(raw)
 
 def comment_on_pull_request(args: dict, token: str):
     owner = args["owner"]

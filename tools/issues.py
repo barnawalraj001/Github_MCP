@@ -1,5 +1,6 @@
 from config import safe_limit
 from github_api import make_request
+from utils.serializers import serialize_issue, safe_list
 
 SCHEMAS = [
     {
@@ -66,14 +67,20 @@ def list_issues(args: dict, token: str):
     owner = args["owner"]
     repo = args["repo"]
     limit = safe_limit(args.get("limit", 10))
-    return make_request("GET", f"repos/{owner}/{repo}/issues", token, params={"per_page": limit})
+    raw = make_request("GET", f"repos/{owner}/{repo}/issues", token, params={"per_page": limit})
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    return safe_list(raw, serialize_issue)
 
 def create_issue(args: dict, token: str):
     owner = args["owner"]
     repo = args["repo"]
     title = args["title"]
     body = args.get("body", "")
-    return make_request("POST", f"repos/{owner}/{repo}/issues", token, json={"title": title, "body": body})
+    raw = make_request("POST", f"repos/{owner}/{repo}/issues", token, json={"title": title, "body": body})
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    return serialize_issue(raw)
 
 def comment_on_issue(args: dict, token: str):
     owner = args["owner"]
@@ -86,7 +93,10 @@ def close_issue(args: dict, token: str):
     owner = args["owner"]
     repo = args["repo"]
     issue_number = args["issue_number"]
-    return make_request("PATCH", f"repos/{owner}/{repo}/issues/{issue_number}", token, json={"state": "closed"})
+    raw = make_request("PATCH", f"repos/{owner}/{repo}/issues/{issue_number}", token, json={"state": "closed"})
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    return serialize_issue(raw)
 
 HANDLERS = {
     "github.list_issues": list_issues,

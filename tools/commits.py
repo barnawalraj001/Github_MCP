@@ -1,5 +1,6 @@
 from config import safe_limit
 from github_api import make_request
+from utils.serializers import serialize_commit, safe_list
 
 SCHEMAS = [
     {
@@ -38,13 +39,19 @@ def list_commits(args: dict, token: str):
     owner = args["owner"]
     repo = args["repo"]
     limit = safe_limit(args.get("limit", 10))
-    return make_request("GET", f"repos/{owner}/{repo}/commits", token, params={"per_page": limit})
+    raw = make_request("GET", f"repos/{owner}/{repo}/commits", token, params={"per_page": limit})
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    return safe_list(raw, serialize_commit)
 
 def get_commit(args: dict, token: str):
     owner = args["owner"]
     repo = args["repo"]
     ref = args["ref"]
-    return make_request("GET", f"repos/{owner}/{repo}/commits/{ref}", token)
+    raw = make_request("GET", f"repos/{owner}/{repo}/commits/{ref}", token)
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    return serialize_commit(raw)
 
 HANDLERS = {
     "github.list_commits": list_commits,

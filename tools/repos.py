@@ -1,5 +1,6 @@
 from config import safe_limit
 from github_api import make_request
+from utils.serializers import serialize_repo, safe_list
 
 SCHEMAS = [
     {
@@ -44,12 +45,19 @@ SCHEMAS = [
 
 def list_repos(args: dict, token: str):
     limit = safe_limit(args.get("limit", 10))
-    return make_request("GET", "user/repos", token, params={"per_page": limit})
+    raw = make_request("GET", "user/repos", token, params={"per_page": limit})
+    # If error JSON is returned, raw will usually have 'error', which is not a list.
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    return safe_list(raw, serialize_repo)
 
 def get_repo_details(args: dict, token: str):
     owner = args["owner"]
     repo = args["repo"]
-    return make_request("GET", f"repos/{owner}/{repo}", token)
+    raw = make_request("GET", f"repos/{owner}/{repo}", token)
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    return serialize_repo(raw)
 
 def list_branches(args: dict, token: str):
     owner = args["owner"]

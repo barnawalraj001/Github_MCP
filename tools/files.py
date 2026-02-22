@@ -1,4 +1,5 @@
 from github_api import make_request
+from utils.serializers import serialize_file, safe_list
 
 SCHEMAS = [
     {
@@ -41,7 +42,11 @@ def get_file_contents(args: dict, token: str):
     params = {}
     if "ref" in args:
         params["ref"] = args["ref"]
-    return make_request("GET", f"repos/{owner}/{repo}/contents/{path}", token, params=params)
+    raw = make_request("GET", f"repos/{owner}/{repo}/contents/{path}", token, params=params)
+    if isinstance(raw, dict) and "error" in raw:
+        return raw        
+    # GitHub often returns file contents as objects if it's a file, but lists if it's a directory
+    return safe_list(raw, serialize_file)
 
 def create_or_update_file(args: dict, token: str):
     owner = args["owner"]
@@ -56,7 +61,13 @@ def create_or_update_file(args: dict, token: str):
     if "branch" in args:
         json_data["branch"] = args["branch"]
         
-    return make_request("PUT", f"repos/{owner}/{repo}/contents/{path}", token, json=json_data)
+    raw = make_request("PUT", f"repos/{owner}/{repo}/contents/{path}", token, json=json_data)
+    if isinstance(raw, dict) and "error" in raw:
+        return raw
+    # We serialize the created file content representation here (or return empty if none)
+    if "content" in raw and raw["content"]:
+        return serialize_file(raw["content"])
+    return {"status": "success"}
 
 HANDLERS = {
     "github.get_file_contents": get_file_contents,
