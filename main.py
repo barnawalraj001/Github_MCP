@@ -74,7 +74,17 @@ async def mcp_handler(request: Request):
     params = body.get("params", {})
     meta = body.get("meta", {})
 
-    # TEST MODE USER RESOLUTION
+    # ---------------- tools/list (no auth required) ----------------
+    if method == "tools/list":
+        return {
+            "jsonrpc": "2.0",
+            "id": id_,
+            "result": {
+                "tools": tools.get_all_tool_schemas()
+            }
+        }
+
+    # TEST MODE USER RESOLUTION (required for all other methods)
     user_id = meta.get("user_id")
     if not user_id:
         return JSONResponse(
@@ -84,12 +94,8 @@ async def mcp_handler(request: Request):
 
     token = get_token(user_id)
     if not token:
-        # Construct the auth URL dynamically based on the incoming request domain
-        # If running locally this will typically be http://localhost:8000/auth/github/login?user_id=...
-        # In a real deployed environment it will use the deployed hostname.
         base_url = str(request.base_url).rstrip("/")
         auth_url = f"{base_url}/auth/github/login?user_id={user_id}"
-
         return JSONResponse(
             status_code=401,
             content={
@@ -98,16 +104,6 @@ async def mcp_handler(request: Request):
                 "message": f"Please visit {auth_url} to connect your GitHub account."
             }
         )
-
-    # ---------------- tools/list ----------------
-    if method == "tools/list":
-        return {
-            "jsonrpc": "2.0",
-            "id": id_,
-            "result": {
-                "tools": tools.get_all_tool_schemas()
-            }
-        }
 
     # ---------------- tools/call ----------------
     if method == "tools/call":
