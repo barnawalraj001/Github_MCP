@@ -12,3 +12,7 @@ def get_token(user_id: str) -> str:
     """Retrieve GitHub access token for a user from Redis."""
     token = redis_client.get(f"github_token:{user_id}")
     return token
+
+def delete_token(user_id: str):
+    """Delete GitHub access token for a user from Redis."""
+    redis_client.delete(f"github_token:{user_id}")

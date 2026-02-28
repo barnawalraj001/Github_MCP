@@ -1,20 +1,54 @@
 # main.py
+import os
+import json
+import secrets
 import requests
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from config import CLIENT_ID, CLIENT_SECRET
-from tokens import save_token, get_token
+from tokens import save_token, get_token, redis_client, delete_token
 import tools
 
 app = FastAPI()
+
+FRONTEND_URLS_ENV = os.environ.get("FRONTEND_URLS", "http://localhost:3000")
+FRONTEND_URLS = [url.strip() for url in FRONTEND_URLS_ENV.split(",") if url.strip()]
+if not FRONTEND_URLS:
+    FRONTEND_URLS = ["http://localhost:3000"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=FRONTEND_URLS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+STATE_PREFIX = "oauth_state"
+
+def _state_key(state: str) -> str:
+    return f"{STATE_PREFIX}:{state}"
 
 
 # -------------------------------------------------
 # GitHub OAuth Login (TEST MODE)
 # -------------------------------------------------
 @app.get("/auth/github/login")
-def github_login(request: Request, user_id: str):
+def github_login(request: Request, user_id: str = "default", redirect_origin: str = None):
+    if not redirect_origin or redirect_origin not in FRONTEND_URLS:
+        redirect_origin = FRONTEND_URLS[0]
+
+    state = secrets.token_urlsafe(16)
+    
+    # Store state in Redis
+    state_data = {
+        "user_id": user_id,
+        "redirect_origin": redirect_origin
+    }
+    redis_client.setex(_state_key(state), 300, json.dumps(state_data))
+
     # Dynamically build the redirect URI based on the host serving the login request
     base_url = str(request.base_url).rstrip("/")
     redirect_uri = f"{base_url}/auth/callback/github"
@@ -23,7 +57,7 @@ def github_login(request: Request, user_id: str):
         "https://github.com/login/oauth/authorize"
         f"?client_id={CLIENT_ID}"
         f"&redirect_uri={redirect_uri}"
-        f"&state={user_id}"
+        f"&state={state}"
         "&scope=repo read:user user:email"
     )
     return RedirectResponse(github_url)
@@ -33,27 +67,69 @@ def github_login(request: Request, user_id: str):
 # GitHub OAuth Callback
 # -------------------------------------------------
 @app.get("/auth/callback/github")
-def github_callback(code: str, state: str):
-    token_res = requests.post(
-        "https://github.com/login/oauth/access_token",
-        headers={"Accept": "application/json"},
-        data={
-            "client_id": CLIENT_ID,
-            "client_secret": CLIENT_SECRET,
-            "code": code,
-        },
-    ).json()
+def github_callback(request: Request):
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
 
-    access_token = token_res.get("access_token")
-    if not access_token:
-        return {"error": "GitHub OAuth failed"}
+    # Default fallback
+    redirect_origin = FRONTEND_URLS[0]
 
-    save_token(state, access_token)
+    if not code or not state:
+        return RedirectResponse(f"{redirect_origin}/integrations/callback?service=github&status=error")
 
-    return {
-        "status": "connected",
-        "user_id": state
-    }
+    state_data_str = redis_client.get(_state_key(state))
+    if not state_data_str:
+        return RedirectResponse(f"{redirect_origin}/integrations/callback?service=github&status=error")
+
+    try:
+        state_data = json.loads(state_data_str)
+        user_id = state_data.get("user_id", "default")
+        redirect_origin = state_data.get("redirect_origin", FRONTEND_URLS[0])
+    except Exception:
+        return RedirectResponse(f"{redirect_origin}/integrations/callback?service=github&status=error")
+
+    if redirect_origin not in FRONTEND_URLS:
+        redirect_origin = FRONTEND_URLS[0]
+
+    try:
+        token_res = requests.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            data={
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "code": code,
+            },
+        ).json()
+
+        access_token = token_res.get("access_token")
+        if not access_token:
+            return RedirectResponse(f"{redirect_origin}/integrations/callback?service=github&status=error")
+
+        save_token(user_id, access_token)
+        
+        # Cleanup state
+        redis_client.delete(_state_key(state))
+
+        return RedirectResponse(f"{redirect_origin}/integrations/callback?service=github&status=success")
+    except Exception as e:
+        print(f"OAuth callback error: {e}")
+        return RedirectResponse(f"{redirect_origin}/integrations/callback?service=github&status=error")
+
+
+@app.post("/auth/disconnect")
+async def disconnect_github(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
+        
+    user_id = payload.get("user_id")
+    if not user_id:
+        return JSONResponse(status_code=400, content={"error": "Missing user_id"})
+
+    delete_token(user_id)
+    return {"success": True, "service": "github"}
 
 
 # -------------------------------------------------
