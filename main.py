@@ -3,7 +3,7 @@ import os
 import json
 import secrets
 import requests
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -37,8 +37,12 @@ def _state_key(state: str) -> str:
 # -------------------------------------------------
 @app.get("/auth/github/login")
 def github_login(request: Request, user_id: str = "default", redirect_origin: str = None):
-    if not redirect_origin or redirect_origin not in FRONTEND_URLS:
-        redirect_origin = FRONTEND_URLS[0]
+    # Validate redirect_origin strictly
+    if not redirect_origin:
+        raise HTTPException(status_code=400, detail="redirect_origin is required")
+
+    if redirect_origin not in FRONTEND_URLS:
+        raise HTTPException(status_code=400, detail="Invalid redirect_origin")
 
     state = secrets.token_urlsafe(16)
     
