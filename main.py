@@ -3,13 +3,36 @@ import os
 import json
 import secrets
 import requests
+import jwt
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import CLIENT_ID, CLIENT_SECRET
+from config import CLIENT_ID, CLIENT_SECRET, MCP_SECRET
 from tokens import save_token, get_token, redis_client, delete_token
 import tools
+
+THIS_MCP = "github"
+
+def verify_mcp_token(request: Request) -> dict:
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or malformed Authorization header")
+
+    token = auth_header.split(" ", 1)[1]
+
+    try:
+        decoded = jwt.decode(token, MCP_SECRET, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    provider = decoded.get("mcp")
+    if provider != THIS_MCP:
+        raise HTTPException(status_code=403, detail=f"Token not valid for this MCP service (expected '{THIS_MCP}', got '{provider}')")
+
+    return decoded
 
 app = FastAPI()
 
@@ -152,7 +175,6 @@ async def mcp_handler(request: Request):
     method = body.get("method")
     id_ = body.get("id")
     params = body.get("params", {})
-    meta = body.get("meta", {})
 
     # ---------------- tools/list (no auth required) ----------------
     if method == "tools/list":
@@ -164,13 +186,15 @@ async def mcp_handler(request: Request):
             }
         }
 
-    # TEST MODE USER RESOLUTION (required for all other methods)
-    user_id = meta.get("user_id")
+    # JWT VERIFICATION — extract user_id and provider from signed token
+    try:
+        decoded = verify_mcp_token(request)
+    except HTTPException as e:
+        return JSONResponse(status_code=e.status_code, content={"error": e.detail})
+
+    user_id = decoded.get("uid")
     if not user_id:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "meta.user_id is required (test mode)"}
-        )
+        return JSONResponse(status_code=401, content={"error": "JWT missing 'uid' claim"})
 
     token = get_token(user_id)
     if not token:
